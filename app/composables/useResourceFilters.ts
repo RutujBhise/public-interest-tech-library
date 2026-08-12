@@ -1,5 +1,6 @@
 import type { ResourcesCollectionItem } from '@nuxt/content'
 import type { ComputedRef, MaybeRefOrGetter, Ref } from 'vue'
+import type { LocationQuery } from 'vue-router'
 
 /**
  * Filtering logic for the resource catalog, extracted so the page component
@@ -56,6 +57,18 @@ export interface UseResourceFiltersReturn {
 // Canonical display order for levels (alphabetical would be misleading here).
 const LEVEL_ORDER: ResourceLevel[] = ['Beginner', 'Intermediate', 'Advanced']
 
+// How long to wait after the last keystroke before writing search to the URL.
+const SEARCH_DEBOUNCE_MS = 300
+
+// Query-string keys used to persist filter state. Kept short for tidy URLs.
+const QUERY_KEYS = ['q', 'tags', 'level', 'format'] as const
+
+// Coerce a possibly-repeated query param into a single trimmed string.
+function readParam(value: LocationQuery[string]): string {
+  if (Array.isArray(value)) return (value[0] ?? '').trim()
+  return (value ?? '').trim()
+}
+
 /**
  * @param source The resource list (accepts a ref, getter, or plain array;
  *   `null`/`undefined` are treated as an empty list while data loads).
@@ -63,11 +76,8 @@ const LEVEL_ORDER: ResourceLevel[] = ['Beginner', 'Intermediate', 'Advanced']
 export function useResourceFilters(
   source: MaybeRefOrGetter<ResourcesCollectionItem[] | null | undefined>,
 ): UseResourceFiltersReturn {
-  // Filter state.
-  const searchQuery = ref('')
-  const selectedTags = ref<ResourceTag[]>([])
-  const selectedLevel = ref<ResourceLevel | ''>('')
-  const selectedFormat = ref<ResourceFormat | ''>('')
+  const route = useRoute()
+  const router = useRouter()
 
   // Normalise the source into a concrete, reactive array.
   const resources = computed<ResourcesCollectionItem[]>(() => toValue(source) ?? [])
@@ -92,6 +102,34 @@ export function useResourceFilters(
     const present = new Set<ResourceFormat>(resources.value.map(r => r.format))
     return [...present].sort((a, b) => a.localeCompare(b))
   })
+
+  // Parse filter state out of a URL query, discarding anything that isn't a
+  // valid option for the current content (so hand-edited URLs degrade safely).
+  function parseQuery(query: LocationQuery) {
+    const tagPool = new Set<string>(availableTags.value)
+    const search = readParam(query.q)
+    const tags = readParam(query.tags)
+      .split(',')
+      .map(t => t.trim())
+      .filter((t): t is ResourceTag => tagPool.has(t))
+    const levelParam = readParam(query.level)
+    const level = (availableLevels.value as string[]).includes(levelParam)
+      ? (levelParam as ResourceLevel)
+      : ''
+    const formatParam = readParam(query.format)
+    const format = (availableFormats.value as string[]).includes(formatParam)
+      ? (formatParam as ResourceFormat)
+      : ''
+    return { search, tags, level, format }
+  }
+
+  // Filter state, initialised from the current URL so a shared/bookmarked link
+  // (and SSR) renders the correct filtered view immediately.
+  const initial = parseQuery(route.query)
+  const searchQuery = ref(initial.search)
+  const selectedTags = ref<ResourceTag[]>(initial.tags)
+  const selectedLevel = ref<ResourceLevel | ''>(initial.level)
+  const selectedFormat = ref<ResourceFormat | ''>(initial.format)
 
   // Apply every active filter. Tags use OR semantics (match ANY selected tag);
   // level and format are single-select exact matches.
@@ -170,6 +208,73 @@ export function useResourceFilters(
     selectedLevel.value = ''
     selectedFormat.value = ''
   }
+
+  // --- URL <-> state synchronisation --------------------------------------
+  // The query string is the shareable source of truth. State is written to the
+  // URL on change (client-side only, no full navigation) and read back from it
+  // on load and on back/forward navigation.
+
+  // Build the query object that represents the current filter state. Empty
+  // filters are omitted so the URL stays clean (e.g. `/` when nothing is set).
+  function buildQuery(): LocationQuery {
+    const query: LocationQuery = {}
+    const search = searchQuery.value.trim()
+    if (search) query.q = search
+    if (selectedTags.value.length) query.tags = selectedTags.value.join(',')
+    if (selectedLevel.value) query.level = selectedLevel.value
+    if (selectedFormat.value) query.format = selectedFormat.value
+    return query
+  }
+
+  // Compare only the keys we own, so unrelated query params are left untouched.
+  function sameAsUrl(query: LocationQuery): boolean {
+    return QUERY_KEYS.every(key => readParam(route.query[key]) === readParam(query[key]))
+  }
+
+  // Push state to the URL. `push` (not `replace`) records a history entry so the
+  // browser back button steps through filter changes; the guard prevents
+  // redundant/duplicate navigations. This is a client-side query update only —
+  // the page component is not re-created and data is not refetched.
+  function writeUrl(): void {
+    const next = buildQuery()
+    if (!sameAsUrl(next)) {
+      router.push({ query: next }).catch(() => {})
+    }
+  }
+
+  // Debounce only the search field so rapid typing coalesces into one history
+  // entry / URL update. Filtering itself stays instant (it reads searchQuery).
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined
+  watch(searchQuery, () => {
+    clearTimeout(debounceTimer)
+    debounceTimer = setTimeout(writeUrl, SEARCH_DEBOUNCE_MS)
+  })
+
+  // Tags, level and format update the URL immediately (also flushing any
+  // pending debounced search write so the URL reflects the typed text too).
+  watch([selectedTags, selectedLevel, selectedFormat], () => {
+    clearTimeout(debounceTimer)
+    writeUrl()
+  })
+
+  // Read the URL back into state. Fires on back/forward navigation (and any
+  // external query change); equality guards stop this from bouncing back into
+  // writeUrl and creating a feedback loop.
+  watch(
+    () => route.query,
+    (query) => {
+      const parsed = parseQuery(query)
+      if (searchQuery.value !== parsed.search) searchQuery.value = parsed.search
+      if (selectedTags.value.join(',') !== parsed.tags.join(',')) {
+        selectedTags.value = parsed.tags
+      }
+      if (selectedLevel.value !== parsed.level) selectedLevel.value = parsed.level
+      if (selectedFormat.value !== parsed.format) selectedFormat.value = parsed.format
+    },
+  )
+
+  // Avoid a dangling timer if the component unmounts mid-debounce.
+  onScopeDispose(() => clearTimeout(debounceTimer))
 
   return {
     searchQuery,
