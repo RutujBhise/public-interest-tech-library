@@ -1,0 +1,11 @@
+# Netlify configuration for a statically generated Nuxt 4 site.
+# `nuxt generate` prerenders the whole site to static files in .output/public,
+# which Netlify serves directly from its CDN (no server runtime required).
+
+[build]
+  command = "npm run generate"
+  publish = ".output/public"
+
+[build.environment]
+  # Pin a modern Node version for reproducible builds.
+  NODE_VERSION = "22"
