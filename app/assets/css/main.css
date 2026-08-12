@@ -177,3 +177,23 @@ button {
   font: inherit;
   cursor: pointer;
 }
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* 5. Responsive scaling --------------------------------------------------- */
+/* On small screens, dial down the largest headings and section spacing so
+   layouts stay comfortable down to narrow mobile widths. Component layouts
+   themselves are fluid (auto-fill grids, flex-wrap), so only tokens change. */
+@media (max-width: 40rem) {
+  :root {
+    --text-3xl: 1.953rem;
+    --text-2xl: 1.563rem;
+    --text-xl: 1.25rem;
+    --space-6: 1.5rem;
+    --space-7: 2rem;
+    --space-8: 2.5rem;
+  }
+}

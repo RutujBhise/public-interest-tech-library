@@ -15,11 +15,17 @@ if (!page.value) {
     fatal: true,
   })
 }
+
+// Per-page SEO meta from the page frontmatter (title/description).
+useSeoMeta({
+  title: () => page.value?.title,
+  description: () => page.value?.description,
+})
 </script>
 
 <template>
   <div class="page">
-    <NuxtLink to="/" class="back">&larr; Back to catalog</NuxtLink>
+    <NuxtLink to="/" class="back">&larr; Back to all resources</NuxtLink>
     <div class="prose">
       <ContentRenderer v-if="page" :value="page" />
     </div>
